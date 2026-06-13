@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+mlflow.db
+mlruns/
+cookies.txt
+*.faiss

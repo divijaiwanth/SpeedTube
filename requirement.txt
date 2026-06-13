@@ -1,0 +1,29 @@
+# Core LangChain
+langchain==0.3.25
+langchain-core==0.3.60
+langchain-community==0.3.24
+langchain-huggingface==0.1.2
+langchain-ollama==0.3.2
+langchain-text-splitters==0.3.8
+
+# Vector store
+faiss-cpu==1.9.0
+
+# Embeddings & reranking (both local, no API key)
+sentence-transformers==3.4.1    # HuggingFace embeddings + BGE reranker
+
+# BM25 (for hybrid search)
+rank_bm25==0.2.2
+
+# YouTube transcript fetching
+youtube-transcript-api==1.0.3
+
+# UI
+streamlit==1.45.1
+
+# Utilities
+numpy==1.26.4
+
+mlflow
+ragas
+datasets
