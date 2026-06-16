@@ -1,0 +1,5 @@
+2026-06-16 13:23:30 | INFO | main:94 | Redis connected successfully
+2026-06-16 13:23:52 | INFO | main:422 | Cache MISS — building index for video XEaShPI3et8
+2026-06-16 13:23:55 | INFO | main:295 | Session 1f7a4c6cfb38 cached in Redis (TTL: 10800s)
+2026-06-16 13:23:55 | INFO | main:438 | Index built and cached: 82 chunks, session 1f7a4c6cfb38
+2026-06-16 13:24:07 | INFO | main:529 | Summary request: session=1f7a4c6cfb38, type=bullets

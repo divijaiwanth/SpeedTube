@@ -81,7 +81,7 @@ function VideoLoader({ onLoaded }) {
   return (
     <div className="video-loader">
       <div className="loader-inner">
-        <h1 className="logo">RAGTube</h1>
+        <h1 className="logo">SpeedTube</h1>
         <p className="tagline">Ask anything about any YouTube video</p>
         <div className="input-row">
           <input
