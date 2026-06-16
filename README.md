@@ -2,7 +2,7 @@
 
 > Get up to speed on any YouTube video — instantly.
 
-SpeedTube is a production-grade RAG (Retrieval-Augmented Generation) system that lets you ask questions, get summaries, and extract insights from any YouTube video using its transcript. Built with advanced retrieval techniques, a FastAPI backend, and a React frontend.
+SpeedTube is a production-grade RAG (Retrieval-Augmented Generation) system that lets you ask questions, get summaries, and extract insights from any YouTube video using its transcript. Built with advanced retrieval techniques, a FastAPI backend, a React frontend, and production guardrails.
 
 ---
 
@@ -28,6 +28,10 @@ Parent-child chunking (LangChain)
 └─────────────────────────┘
     ↓
 Query comes in
+    ↓
+Input Guardrails (validate question)
+    ↓
+Circuit Breaker (check Groq health)
     ↓
 HyDE — generate hypothetical answer, embed it
     ↓
@@ -56,6 +60,9 @@ FastAPI response → React UI
 | RAG framework | LangChain |
 | Backend | FastAPI + Uvicorn |
 | Frontend | React |
+| Cache | Redis |
+| Rate limiting | slowapi |
+| Logging | loguru |
 | Evaluation | RAGAS + MLflow |
 
 ---
@@ -65,14 +72,14 @@ FastAPI response → React UI
 ```
 SpeedTube/
 ├── backend/
-│   └── main.py              # FastAPI app — all API endpoints
+│   └── main.py              # FastAPI app — all API endpoints + guardrails
 ├── frontend/
 │   └── src/
 │       ├── App.js            # React app — UI components
 │       └── App.css           # Styles
 ├── langchain_helper.py       # Core RAG pipeline (Phase 1)
 ├── evaluate.py               # RAGAS evaluation pipeline (Phase 2)
-├── diagnose.py               # YouTube transcript diagnostics
+├── logs/                     # Runtime logs (gitignored)
 ├── requirements.txt
 └── .env                      # API keys (never committed)
 ```
@@ -81,10 +88,11 @@ SpeedTube/
 
 ## API Endpoints
 
-The FastAPI backend runs at `http://localhost:8000`. Full interactive docs at `/docs`.
+Full interactive docs at `http://localhost:8000/docs`.
 
 ### `POST /ingest`
 Load a YouTube video and build the RAG index.
+Rate limited to **5 requests/minute** per IP. Idempotent.
 
 ```bash
 curl -X POST http://localhost:8000/ingest \
@@ -104,6 +112,7 @@ curl -X POST http://localhost:8000/ingest \
 
 ### `POST /query`
 Ask a question about a loaded video.
+Rate limited to **10 requests/minute** per IP.
 
 ```bash
 curl -X POST http://localhost:8000/query \
@@ -121,6 +130,7 @@ curl -X POST http://localhost:8000/query \
 
 ### `GET /summary`
 Get a summary of a loaded video.
+Rate limited to **5 requests/minute** per IP.
 
 ```bash
 curl "http://localhost:8000/summary?session_id=92de3076a6db&summary_type=bullets"
@@ -129,14 +139,23 @@ curl "http://localhost:8000/summary?session_id=92de3076a6db&summary_type=bullets
 `summary_type` options: `concise`, `detailed`, `bullets`
 
 ### `GET /health`
-Health check — returns uptime and active session count.
+Returns Redis status, circuit breaker state, and uptime.
+
+```json
+{
+  "status": "ok",
+  "redis_connected": true,
+  "circuit_breaker_state": "CLOSED",
+  "uptime_seconds": 142.3
+}
+```
 
 ### `DELETE /session/{session_id}`
-Clear a session from memory.
+Clear a session from cache to free memory.
 
 ---
 
-## Advanced RAG Techniques (Phase 1)
+## Phase 1 — Advanced RAG
 
 ### Parent-Child Chunking
 Small chunks (300 chars) are used for retrieval — precise matching. When a child chunk is retrieved, its parent (1200 chars) is sent to the LLM — full context. Prevents relevant context from being split across chunk boundaries.
@@ -148,21 +167,17 @@ BM25 handles exact keyword matches (names, technical terms). FAISS handles seman
 score = Σ 1 / (rank + 60)
 ```
 
-Higher-ranked results from either retriever get boosted. The constant 60 prevents top-ranked results from completely dominating.
-
 ### HyDE (Hypothetical Document Embeddings)
 Instead of embedding the raw question, the LLM generates a hypothetical answer first, then that answer is embedded. A hypothetical answer is lexically closer to the actual transcript than a short question, improving cosine similarity matching significantly.
 
 Paper: [Precise Zero-Shot Dense Retrieval without Relevance Labels](https://arxiv.org/abs/2212.10496)
 
 ### Cross-Encoder Reranking
-10 candidate chunks are retrieved via hybrid search. All 10 are passed through `BAAI/bge-reranker-base` — a cross-encoder that scores (query, document) pairs jointly instead of independently. Top 3 are kept. Cross-encoders are more accurate than cosine similarity but too slow to run on the full index, hence the two-stage approach.
+10 candidate chunks are retrieved via hybrid search. All 10 are passed through `BAAI/bge-reranker-base` — a cross-encoder that scores (query, document) pairs jointly. Top 3 are kept. Two-stage approach: FAISS for speed, cross-encoder for accuracy.
 
 ---
 
-## Evaluation (Phase 2)
-
-SpeedTube includes a full evaluation pipeline using [RAGAS](https://docs.ragas.io) and [MLflow](https://mlflow.org).
+## Phase 2 — Evaluation
 
 ### Metrics
 
@@ -177,8 +192,6 @@ SpeedTube includes a full evaluation pipeline using [RAGAS](https://docs.ragas.i
 
 ```bash
 python evaluate.py <youtube_video_id> <n_questions>
-
-# Example
 python evaluate.py zjkBMFhNj_g 10
 ```
 
@@ -188,8 +201,6 @@ python evaluate.py zjkBMFhNj_g 10
 mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
 ```
 
-Open `http://localhost:5001` to compare runs, view per-question scores, and track how pipeline changes affect metrics.
-
 ### Sample results
 
 | Video type | Faithfulness | Answer Relevancy | Context Precision | Context Recall |
@@ -197,7 +208,65 @@ Open `http://localhost:5001` to compare runs, view per-question scores, and trac
 | Conversational | 0.25 | 0.82 | 0.00 | 0.00 |
 | Technical tutorial | 0.33 | 0.56 | 0.40 | 0.50 |
 
-Context metrics improve significantly on structured technical content. All metrics will improve further after Phase 5 (Bedrock migration) when a stronger judge model is used for evaluation.
+---
+
+## Phase 4 — Production Guardrails
+
+### Rate Limiting
+Built with `slowapi` — a FastAPI-compatible rate limiting library using the token bucket algorithm.
+
+| Endpoint | Limit |
+|---|---|
+| `POST /ingest` | 5 requests/minute |
+| `POST /query` | 10 requests/minute |
+| `GET /summary` | 5 requests/minute |
+
+Clients that exceed the limit receive a `429 Too Many Requests` response automatically.
+
+### Redis Caching
+Sessions are cached in Redis with a 3-hour TTL (sliding expiry — resets on each access).
+
+```
+First call  → build FAISS index (10-30 seconds)
+Second call → Redis cache hit (< 100ms)
+```
+
+The cache is persistent — sessions survive server restarts. Falls back to in-memory if Redis is unavailable.
+
+### Input Guardrails
+Every question is validated before hitting the LLM:
+
+- Empty questions rejected
+- Questions under 5 characters rejected
+- Questions over 500 characters rejected
+- Prompt injection patterns blocked (`"ignore previous instructions"`, `"jailbreak"` etc.)
+- Non-YouTube URLs rejected at `/ingest`
+
+### Circuit Breaker
+Protects against cascading failures when Groq API is down.
+
+```
+State: CLOSED → normal operation
+         ↓ (3 consecutive failures)
+State: OPEN → all requests blocked, returns 503 immediately
+         ↓ (60 second cooldown)
+State: HALF-OPEN → one test request allowed
+         ↓ (success)
+State: CLOSED → normal operation resumes
+```
+
+The circuit breaker state is visible at `GET /health`.
+
+### Structured Logging
+All logs written via `loguru` to both terminal and `logs/speedtube.log`.
+
+```
+2026-06-13 11:04:26 | INFO | api:89 | Cache HIT for video zjkBMFhNj_g
+2026-06-13 11:04:31 | WARNING | api:134 | Invalid question rejected: too short
+2026-06-13 11:04:45 | WARNING | api:112 | Circuit breaker OPENED after 3 failures
+```
+
+Log files rotate at 10MB and are retained for 7 days.
 
 ---
 
@@ -206,6 +275,7 @@ Context metrics improve significantly on structured technical content. All metri
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
+- Redis (via WSL on Windows, or Redis Cloud free tier)
 - A [Groq API key](https://console.groq.com) (free)
 
 ### Backend
@@ -214,24 +284,26 @@ Context metrics improve significantly on structured technical content. All metri
 git clone https://github.com/yourusername/SpeedTube.git
 cd SpeedTube
 
-# Create virtual environment
 uv venv
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # Mac/Linux
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate     # Mac/Linux
 
-# Install dependencies
 uv pip install -r requirements.txt
 
-# Set environment variable
-$env:GROQ_API_KEY = "gsk_your_key_here"  # Windows PowerShell
-export GROQ_API_KEY="gsk_your_key_here"  # Mac/Linux
+# Set environment variables
+$env:GROQ_API_KEY = "gsk_your_key_here"   # Windows
+export GROQ_API_KEY="gsk_your_key_here"   # Mac/Linux
+
+# Start Redis (Windows via WSL)
+wsl sudo service redis-server start
+
+# Create logs directory
+mkdir logs
 
 # Run backend
 cd backend
 uvicorn main:app --reload --port 8000
 ```
-
-API docs available at `http://localhost:8000/docs`
 
 ### Frontend
 
@@ -241,8 +313,6 @@ npm install
 npm start
 ```
 
-App available at `http://localhost:3000`
-
 ---
 
 ## Roadmap
@@ -250,14 +320,14 @@ App available at `http://localhost:3000`
 - [x] Phase 1 — Advanced RAG pipeline (hybrid search, reranking, HyDE, parent-child chunking)
 - [x] Phase 2 — RAGAS evaluation + MLflow experiment tracking
 - [x] Phase 3 — FastAPI backend + React frontend
-- [ ] Phase 4 — Guardrails, rate limiting, Redis caching, structured logging
+- [x] Phase 4 — Rate limiting, Redis caching, guardrails, circuit breaker, structured logging
 - [ ] Phase 5 — AWS Bedrock migration (Claude Haiku + Titan Embeddings + Lambda deployment)
 
 ---
 
 ## Known Limitations
 
-- Context precision and recall metrics require a strong judge model — currently 0 on conversational videos with llama-3.1-8b. Will be resolved in Phase 5 with Bedrock.
+- Context precision and recall metrics score 0 on conversational videos with llama-3.1-8b as judge — will be resolved in Phase 5 with a stronger Bedrock model.
 - YouTube transcript API requires browser cookies for some videos due to IP-based rate limiting.
-- In-memory session store resets on server restart — Redis persistence coming in Phase 4.
-- HyDE disabled by default locally due to inference latency — will be re-enabled on Bedrock.
+- Circuit breaker state resets on server restart — persistent state coming with Redis in Phase 5.
+- HyDE disabled locally due to inference latency — will be re-enabled on Bedrock.
