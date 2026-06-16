@@ -3,3 +3,4 @@
 2026-06-16 13:23:55 | INFO | main:295 | Session 1f7a4c6cfb38 cached in Redis (TTL: 10800s)
 2026-06-16 13:23:55 | INFO | main:438 | Index built and cached: 82 chunks, session 1f7a4c6cfb38
 2026-06-16 13:24:07 | INFO | main:529 | Summary request: session=1f7a4c6cfb38, type=bullets
+2026-06-16 13:32:06 | INFO | main:94 | Redis connected successfully
