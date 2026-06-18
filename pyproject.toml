@@ -3,20 +3,27 @@ name = "ragtube-youtube-url-based-rag"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.13"
 dependencies = [
     "faiss-cpu==1.9.0",
-    "lanchain-classic",
-    "langchain==0.3.25",
-    "langchain-community==0.3.24",
-    "langchain-core==0.3.60",
-    "langchain-huggingface==0.1.2",
-    "langchain-ollama==0.3.2",
-    "langchain-text-splitters==0.3.8",
+    "langchain-classic",
+    "langchain",
+    "langchain-community",
+    "langchain-core",
+    "langchain-huggingface",
+    "langchain-ollama",
+    "langchain-text-splitters",
     "mlflow",
     "numpy==1.26.4",
     "rank-bm25==0.2.2",
     "sentence-transformers==3.4.1",
     "streamlit==1.45.1",
     "youtube-transcript-api==1.0.3",
+    "fastapi[standard]",
+    "slowapi",
+    "redis",
+    "loguru",
+    "python-dotenv",
+    "python-multipart",
+    "mangum",
 ]
