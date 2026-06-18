@@ -4,3 +4,22 @@
 2026-06-16 13:23:55 | INFO | main:438 | Index built and cached: 82 chunks, session 1f7a4c6cfb38
 2026-06-16 13:24:07 | INFO | main:529 | Summary request: session=1f7a4c6cfb38, type=bullets
 2026-06-16 13:32:06 | INFO | main:94 | Redis connected successfully
+2026-06-16 13:57:27 | INFO | main:94 | Redis connected successfully
+2026-06-19 00:33:12 | WARNING | main:97 | Redis not available, falling back to in-memory cache: Error 10061 connecting to localhost:6379. No connection could be made because the target machine actively refused it.
+2026-06-19 00:33:23 | WARNING | backend.main:97 | Redis not available, falling back to in-memory cache: Error 10061 connecting to localhost:6379. No connection could be made because the target machine actively refused it.
+2026-06-19 00:34:44 | WARNING | backend.main:97 | Redis not available, falling back to in-memory cache: Error 10061 connecting to localhost:6379. No connection could be made because the target machine actively refused it.
+2026-06-19 00:37:25 | WARNING | backend.main:97 | Redis not available, falling back to in-memory cache: Error 10061 connecting to localhost:6379. No connection could be made because the target machine actively refused it.
+2026-06-19 00:40:01 | INFO | backend.main:94 | Redis connected successfully
+2026-06-19 00:40:20 | INFO | backend.main:94 | Redis connected successfully
+2026-06-19 00:41:15 | INFO | backend.main:422 | Cache MISS — building index for video 8jNPelugC2s
+2026-06-19 00:41:22 | INFO | backend.main:422 | Cache MISS — building index for video 8jNPelugC2s
+2026-06-19 00:42:04 | INFO | backend.main:422 | Cache MISS — building index for video 8jNPelugC2s
+2026-06-19 00:42:44 | INFO | backend.main:422 | Cache MISS — building index for video FmiQ9-P1FkM
+2026-06-19 00:42:44 | ERROR | backend.main:428 | Failed to build index for FmiQ9-P1FkM: 
+Could not retrieve a transcript for the video https://www.youtube.com/watch?v=FmiQ9-P1FkM! This is most likely caused by:
+
+The video is no longer available
+
+If you are sure that the described cause is not responsible for this error and that a transcript should be retrievable, please create an issue at https://github.com/jdepoix/youtube-transcript-api/issues. Please add which version of youtube_transcript_api you are using and provide the information needed to replicate the error. Also make sure that there are no open issues which already describe your problem!
+2026-06-19 00:43:22 | INFO | backend.main:422 | Cache MISS — building index for video 8jNPelugC2s
+2026-06-19 00:43:38 | INFO | backend.main:422 | Cache MISS — building index for video jgpVdJB2sKQ
