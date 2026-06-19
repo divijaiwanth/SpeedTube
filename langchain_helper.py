@@ -7,6 +7,10 @@ Upgrades over v1:
   - Cross-encoder reranking (BGE reranker) to re-score top candidates
   - Map-reduce summarisation (not just Q&A)
   - Multi-turn conversational memory
+
+Phase 5 addition:
+  - USE_BEDROCK flag toggles between Groq (free, local dev) and
+    AWS Bedrock (Titan embeddings + Nova Micro) for production deployment.
 """
 
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -16,35 +20,49 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_classic.chains.summarize import load_summarize_chain
 from langchain_classic.memory import ConversationBufferWindowMemory
 from sentence_transformers import CrossEncoder
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional
-
-
-# ---------------------------------------------------------------------------
-# Model setup  (loaded once at module level — not inside functions)
-# ---------------------------------------------------------------------------
-
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-# ---------------------------------------------------------------------------
-# LLM
-# ---------------------------------------------------------------------------
-GrokAPI = os.getenv("GROQ_API_KEY")
-from langchain_groq import ChatGroq
-llm = ChatGroq(model="llama-3.1-8b-instant", api_key=GrokAPI, temperature=0.7)
 
-# Cross-encoder for reranking — local, no API key needed
+# ---------------------------------------------------------------------------
+# Model setup  (loaded once at module level — not inside functions)
+# ---------------------------------------------------------------------------
+# USE_BEDROCK toggles the entire backend:
+#   False (default) → Groq + HuggingFace embeddings — free, fast local dev loop
+#   True             → AWS Bedrock (Titan + Nova Micro) — production deployment
+#
+# This is the ONLY place the model backend is decided. Every function below
+# (get_answer, get_summary, etc.) uses the `llm` and `embeddings` objects
+# defined here without knowing or caring which backend is active — that's
+# the point of LangChain's common interfaces (Embeddings, LLM base classes).
+
+USE_BEDROCK = os.getenv("USE_BEDROCK", "false").lower() == "true"
+
+if USE_BEDROCK:
+    from bedrock_helper import get_bedrock_embeddings, get_bedrock_llm
+
+    embeddings = get_bedrock_embeddings()
+    llm = get_bedrock_llm(temperature=0.7)
+    print("[langchain_helper] Using AWS Bedrock (Titan + Nova Micro)")
+else:
+    from langchain_huggingface import HuggingFaceEmbeddings
+    from langchain_groq import ChatGroq
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    llm = ChatGroq(model="llama-3.1-8b-instant", api_key=GROQ_API_KEY, temperature=0.7)
+    print("[langchain_helper] Using Groq (llama-3.1-8b-instant) + local HuggingFace embeddings")
+
+# Cross-encoder for reranking — local, no API key needed, used regardless of backend
 # BGE reranker is small (~120MB) and very accurate
 reranker = CrossEncoder("BAAI/bge-reranker-base")
 
@@ -81,7 +99,6 @@ def create_video_index(video_id: str) -> VideoIndex:
     Each child doc stores the index of its parent so we can look it up after retrieval.
     """
     # --- 1a. Fetch transcript ---
-    from youtube_transcript_api.proxies import GenericProxyConfig
     ytt_api = YouTubeTranscriptApi()
     try:
         import xml.etree.ElementTree as ET
@@ -93,14 +110,6 @@ def create_video_index(video_id: str) -> VideoIndex:
             "Try a different video."
         )
 
-    # Preserve timestamps as metadata — useful later for chapter detection
-    segments = [
-        Document(
-            page_content=t.text,
-            metadata={"start": t.start, "duration": t.duration}
-        )
-        for t in transcript
-    ]
     full_text = " ".join([t.text for t in transcript])
     raw_doc = Document(page_content=full_text, metadata={"video_id": video_id})
 
@@ -128,6 +137,10 @@ def create_video_index(video_id: str) -> VideoIndex:
         child_docs.extend(children)
 
     # --- 1d. Build FAISS index on child chunks ---
+    # Note: with Bedrock, this calls Titan once per chunk (embed_documents loops
+    # internally in bedrock_helper.py) — for a 300-chunk video that's 300 API
+    # calls. Cheap (~$0.0001 total) but not instant. Local HuggingFace embeddings
+    # remain faster for iterative dev, which is exactly why the flag exists.
     faiss_db = FAISS.from_documents(child_docs, embeddings)
 
     # --- 1e. Build BM25 index on child chunks ---
@@ -183,7 +196,6 @@ def hybrid_retrieve(index: VideoIndex, query: str, k: int = 60) -> list[Document
     """
     # Vector search using HyDE-transformed query
     hypothetical = generate_hypothetical_answer(query)
-    # To this — skip HyDE, use query directly
     vector_docs = index.faiss_db.similarity_search(hypothetical, k=k)
 
     # Keyword search using original query (BM25 is better with exact terms)
@@ -220,7 +232,7 @@ def rerank(query: str, docs: list[Document], top_n: int = 3) -> list[Document]:
     Cross-encoder reranking: pass every (query, doc) pair through a small
     transformer that scores relevance jointly (not just cosine similarity).
 
-    We retrieve 10 via hybrid search, rerank all 10, keep top_n=3.
+    We retrieve candidates via hybrid search, rerank all of them, keep top_n=3.
     """
     if not docs:
         return []
@@ -262,6 +274,8 @@ def get_answer(index: VideoIndex, query: str) -> dict:
       query → HyDE → hybrid retrieval → reranking → parent lookup → LLM
 
     Returns dict with answer + retrieved source snippets for transparency.
+    Works identically regardless of USE_BEDROCK — llm and embeddings are
+    swapped at module load time, everything downstream is unchanged.
     """
     # Retrieve + rerank
     candidate_docs = hybrid_retrieve(index, query, k=60)
@@ -286,8 +300,9 @@ Relevant transcript excerpts:
 Current question: {question}
 
 Instructions:
-- Answer only from the transcript excerpts above.
-- If the answer is not in the transcript, say "I couldn't find that in this video."
+- Answer using only information from the transcript excerpts above.
+- ONLY say "I couldn't find that in this video" if the excerpts contain NO relevant information at all.
+- If you found a relevant answer, give ONLY that answer — do not add any disclaimer afterward.
 - Be concise and direct.
 
 Answer:"""

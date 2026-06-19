@@ -33,14 +33,21 @@ from urllib.parse import urlparse, parse_qs
 #   - Better exception formatting
 
 from loguru import logger
+import os
 
-logger.add(
-    "../logs/speedtube.log",          # log to file
-    rotation="10 MB",              # rotate when file hits 10MB
-    retention="7 days",            # keep 7 days of logs
-    level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{line} | {message}",
-)
+# Lambda's filesystem is read-only except for /tmp — so we only write to a
+# log file when NOT running in Lambda. In Lambda, stdout is automatically
+# captured and sent to CloudWatch, so file logging isn't needed there anyway.
+IS_LAMBDA = bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+
+if not IS_LAMBDA:
+    logger.add(
+        "logs/speedtube.log",          # log to file
+        rotation="10 MB",              # rotate when file hits 10MB
+        retention="7 days",            # keep 7 days of logs
+        level="INFO",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{line} | {message}",
+    )
 
 # ---------------------------------------------------------------------------
 # FastAPI + rate limiting
